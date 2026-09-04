@@ -25,10 +25,16 @@
 .PARAMETER CsvPath
     Percorso di un file CSV con le colonne 'nomePG' e 'VLANID' (una riga per
     port group, nome libero non derivato dalla VLAN). Alternativo a -VlanIds.
+    La colonna VLANID accetta tre formati:
+      - un numero singolo (0-4094)          -> port group in modalita' Access
+      - la parola chiave TRUNK oppure ALL    -> trunk completo, range 0-4094
+      - un range esplicito (es. 10-20 oppure 10-20,30-40) -> trunk sul range indicato
     Esempio di contenuto:
         nomePG,VLANID
         PG-Server-Web,101
         PG-Server-DB,102
+        PG-Trunk-Full,TRUNK
+        PG-Trunk-Parziale,10-20,30-40
 
 .EXAMPLE
     .\New-VDPortgroupFromVlanList.ps1 -vCenter vcenter.lab.local -Username 'lab\amministratore' -VDSwitchName 'vDS-Prod' -VlanIds 10,20,30
@@ -66,6 +72,27 @@ param(
     [Parameter(Mandatory = $true, ParameterSetName = 'ByCsv')]
     [string]  $CsvPath
 )
+
+# --- Validazione di un range/lista di VLAN per il trunk (es. "10-20,30-40") ---
+function Test-VlanTrunkRange {
+    param([string] $Range)
+
+    foreach ($segment in ($Range -split ',')) {
+        $segment = $segment.Trim()
+        if ($segment -match '^(\d{1,4})-(\d{1,4})$') {
+            $lo = [int]$Matches[1]; $hi = [int]$Matches[2]
+            if ($lo -lt 0 -or $hi -gt 4094 -or $lo -gt $hi) { return $false }
+        }
+        elseif ($segment -match '^(\d{1,4})$') {
+            $v = [int]$Matches[1]
+            if ($v -lt 0 -or $v -gt 4094) { return $false }
+        }
+        else {
+            return $false
+        }
+    }
+    return $true
+}
 
 # --- Connessione a vCenter (password richiesta interattivamente) --------
 if (-not (Get-Module -ListAvailable -Name VMware.PowerCLI -ErrorAction SilentlyContinue)) {
@@ -108,18 +135,25 @@ try {
                 continue
             }
 
-            $vlanCsv = 0
-            if (-not [int]::TryParse("$($row.VLANID)".Trim(), [ref] $vlanCsv)) {
-                Write-Warning "VLANID non numerico ('$($row.VLANID)') per '$pgNameCsv': riga saltata."
-                continue
-            }
+            $rawVlan = "$($row.VLANID)".Trim()
 
-            $portGroups += [pscustomobject]@{ Name = $pgNameCsv; Vlan = $vlanCsv }
+            if ($rawVlan -match '^(TRUNK|ALL)$') {
+                $portGroups += [pscustomobject]@{ Name = $pgNameCsv; Mode = 'Trunk'; Vlan = $null; TrunkRange = '0-4094' }
+            }
+            elseif ($rawVlan -match '^\d{1,4}$') {
+                $portGroups += [pscustomobject]@{ Name = $pgNameCsv; Mode = 'Access'; Vlan = [int]$rawVlan; TrunkRange = $null }
+            }
+            elseif ((Test-VlanTrunkRange -Range $rawVlan)) {
+                $portGroups += [pscustomobject]@{ Name = $pgNameCsv; Mode = 'Trunk'; Vlan = $null; TrunkRange = ($rawVlan -replace '\s', '') }
+            }
+            else {
+                Write-Warning "VLANID non valido ('$rawVlan') per '$pgNameCsv': usa un numero, un range (es. 10-20 o 10-20,30-40) oppure TRUNK/ALL. Riga saltata."
+            }
         }
     }
     else {
         foreach ($vlan in $VlanIds) {
-            $portGroups += [pscustomobject]@{ Name = "$NamePrefix$vlan"; Vlan = $vlan }
+            $portGroups += [pscustomobject]@{ Name = "$NamePrefix$vlan"; Mode = 'Access'; Vlan = $vlan; TrunkRange = $null }
         }
     }
 
@@ -127,11 +161,10 @@ try {
 
     foreach ($item in $portGroups) {
         $pgName = $item.Name
-        $vlan   = $item.Vlan
 
-        # --- Validazione range VLAN ---------------------------------------
-        if ($vlan -lt 0 -or $vlan -gt 4094) {
-            Write-Warning "VLAN $vlan fuori range (0-4094) per '$pgName': saltata."
+        # --- Validazione range VLAN (solo modalita' Access) ----------------
+        if ($item.Mode -eq 'Access' -and ($item.Vlan -lt 0 -or $item.Vlan -gt 4094)) {
+            Write-Warning "VLAN $($item.Vlan) fuori range (0-4094) per '$pgName': saltata."
             continue
         }
 
@@ -141,10 +174,18 @@ try {
             continue
         }
 
+        $vlanLabel = if ($item.Mode -eq 'Trunk') { "Trunk $($item.TrunkRange)" } else { "VLAN $($item.Vlan)" }
+
         try {
-            # --- Creazione del port group con la VLAN -----------------------
-            $pg = New-VDPortgroup -VDSwitch $vds -Name $pgName -VlanId $vlan `
-                                  -Notes "Creato via script - VLAN $vlan" -ErrorAction Stop
+            # --- Creazione del port group con VLAN singola o trunk -----------
+            if ($item.Mode -eq 'Trunk') {
+                $pg = New-VDPortgroup -VDSwitch $vds -Name $pgName -VlanTrunkRange $item.TrunkRange `
+                                      -Notes "Creato via script - $vlanLabel" -ErrorAction Stop
+            }
+            else {
+                $pg = New-VDPortgroup -VDSwitch $vds -Name $pgName -VlanId $item.Vlan `
+                                      -Notes "Creato via script - $vlanLabel" -ErrorAction Stop
+            }
 
             # --- Security policy: Reject su tutti e tre i settaggi -----------
             $pg | Get-VDSecurityPolicy |
@@ -158,11 +199,11 @@ try {
                   Set-VDUplinkTeamingPolicy -LoadBalancingPolicy LoadBalanceLoadBased `
                                             -ErrorAction Stop | Out-Null
 
-            Write-Host "OK  -> '$pgName' (VLAN $vlan): security Reject x3, teaming LBT." -ForegroundColor Green
+            Write-Host "OK  -> '$pgName' ($vlanLabel): security Reject x3, teaming LBT." -ForegroundColor Green
             $created += $pg
         }
         catch {
-            Write-Host "ERR -> '$pgName' (VLAN $vlan): $($_.Exception.Message)" -ForegroundColor Red
+            Write-Host "ERR -> '$pgName' ($vlanLabel): $($_.Exception.Message)" -ForegroundColor Red
         }
     }
 
@@ -170,11 +211,13 @@ try {
     if ($created) {
         Write-Host "`n=== Riepilogo port group creati ===" -ForegroundColor Cyan
         $created | ForEach-Object {
-            $sec  = $_ | Get-VDSecurityPolicy
-            $team = $_ | Get-VDUplinkTeamingPolicy
+            $sec     = $_ | Get-VDSecurityPolicy
+            $team    = $_ | Get-VDUplinkTeamingPolicy
+            $vlanCfg = $_.VlanConfiguration
+            $vlan    = if ($vlanCfg.PSObject.Properties['Ranges']) { "Trunk $($vlanCfg.Ranges)" } else { "VLAN $($vlanCfg.VlanId)" }
             [pscustomobject]@{
                 PortGroup       = $_.Name
-                VlanId          = $_.VlanConfiguration.VlanId
+                Vlan            = $vlan
                 Promiscuous     = $sec.AllowPromiscuous
                 MacChanges      = $sec.MacChanges
                 ForgedTransmits = $sec.ForgedTransmits

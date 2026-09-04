@@ -18,11 +18,19 @@ Gestisce in autonomia connessione e disconnessione al vCenter (richiede il
 modulo VMware PowerCLI). La password viene richiesta interattivamente,
 non va mai passata come parametro.
 
+Nel CSV la colonna `VLANID` accetta:
+
+| Formato                  | Risultato                                   |
+|---------------------------|----------------------------------------------|
+| `101`                      | port group Access sulla VLAN 101              |
+| `TRUNK` oppure `ALL`       | port group trunk su tutte le VLAN (0-4094)    |
+| `10-20` oppure `10-20,30-40` | port group trunk sul range indicato        |
+
 ```powershell
 # da lista di VLAN
 .\New-VDPortgroupFromVlanList.ps1 -vCenter vcenter.lab.local -Username 'administrator@vsphere.local' -VDSwitchName 'vDS-Prod' -VlanIds 10,20,30
 
-# da file CSV (colonne: nomePG,VLANID)
+# da file CSV (colonne: nomePG,VLANID) - supporta anche trunk (TRUNK/ALL o range)
 .\New-VDPortgroupFromVlanList.ps1 -vCenter vcenter.lab.local -Username 'administrator@vsphere.local' -VDSwitchName 'vDS-Prod' -CsvPath .\portgroups-example.csv
 ```
 
