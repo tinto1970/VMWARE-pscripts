@@ -1,4 +1,5 @@
-PGName,VLANID
-PG-Server-Web,101
-PG-Trunk-Full,TRUNK
-PG-Trunk-Partial,10-20,30-40
+PGName,VLANID,PortBinding,PortAllocation,NumPorts
+PG-Server-Web,101,,,
+PG-Trunk-Full,TRUNK,,,
+PG-Trunk-Partial,"10-20,30-40",,,
+PG-Ephemeral-Web,102,Ephemeral,,

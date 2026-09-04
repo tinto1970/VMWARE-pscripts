@@ -29,12 +29,37 @@
       - a single number (0-4094)             -> port group in Access mode
       - the keyword TRUNK or ALL              -> full trunk, range 0-4094
       - an explicit range (e.g. 10-20 or 10-20,30-40) -> trunk on that range
+    Three optional columns let each row override -PortBinding,
+    -PortAllocation and -NumPorts individually; when a column is missing
+    or blank for a row, the corresponding script parameter is used as
+    the default. Quote any VLANID value that contains a comma (e.g. a
+    multi-range trunk), otherwise the CSV parser will silently drop
+    everything after the first comma.
     Example content:
-        PGName,VLANID
-        PG-Server-Web,101
-        PG-Server-DB,102
-        PG-Trunk-Full,TRUNK
-        PG-Trunk-Partial,10-20,30-40
+        PGName,VLANID,PortBinding,PortAllocation,NumPorts
+        PG-Server-Web,101,Static,Elastic,
+        PG-Server-DB,102,Static,Fixed,16
+        PG-Trunk-Full,TRUNK,,,
+        PG-Trunk-Partial,"10-20,30-40",,,
+        PG-Ephemeral-Web,104,Ephemeral,,
+
+.PARAMETER PortBinding
+    Default port binding for every port group. Valid values: 'Static'
+    (recommended) or 'Ephemeral'. Default 'Static'. Can be overridden per
+    row via the CSV 'PortBinding' column.
+
+.PARAMETER PortAllocation
+    Default port allocation for every port group, only meaningful when
+    port binding is 'Static' (ignored for 'Ephemeral'). Valid values:
+    'Elastic' (the port group grows automatically, vCenter's own default)
+    or 'Fixed'. Default 'Elastic'. Can be overridden per row via the CSV
+    'PortAllocation' column.
+
+.PARAMETER NumPorts
+    Default number of ports for every port group (only meaningful when
+    port binding is 'Static'; ignored for 'Ephemeral'). If omitted,
+    New-VDPortgroup's own default (128) is used. Can be overridden per
+    row via the CSV 'NumPorts' column.
 
 .EXAMPLE
     .\New-VDPortgroupFromVlanList.ps1 -vCenter vcenter.lab.local -Username 'lab\administrator' -VDSwitchName 'vDS-Prod' -VlanIds 10,20,30
@@ -44,6 +69,9 @@
 
 .EXAMPLE
     .\New-VDPortgroupFromVlanList.ps1 -vCenter vcenter.lab.local -Username 'administrator@vsphere.local' -VDSwitchName 'vDS-Prod' -CsvPath '.\portgroups.csv'
+
+.EXAMPLE
+    .\New-VDPortgroupFromVlanList.ps1 -vCenter vcenter.lab.local -Username 'administrator@vsphere.local' -VDSwitchName 'vDS-Prod' -VlanIds 10,20 -PortBinding Static -PortAllocation Fixed -NumPorts 16
 
 .NOTES
     Requires VMware PowerCLI. The script handles vCenter connection and
@@ -71,7 +99,16 @@ param(
     [string]  $NamePrefix = 'PG-VLAN-',
 
     [Parameter(Mandatory = $true, ParameterSetName = 'ByCsv')]
-    [string]  $CsvPath
+    [string]  $CsvPath,
+
+    [ValidateSet('Static', 'Ephemeral')]
+    [string]  $PortBinding = 'Static',
+
+    [ValidateSet('Elastic', 'Fixed')]
+    [string]  $PortAllocation = 'Elastic',
+
+    [ValidateRange(1, 8192)]
+    [int]     $NumPorts = 0
 )
 
 # --- Validates a VLAN range/list for trunk mode (e.g. "10-20,30-40") ----
@@ -93,6 +130,59 @@ function Test-VlanTrunkRange {
         }
     }
     return $true
+}
+
+# --- Resolves and validates PortBinding/PortAllocation/NumPorts for a ----
+# --- port group, applying script-level defaults when a value is blank ---
+function Resolve-PortGroupOptions {
+    param(
+        [string] $PGName,
+        [string] $RawPortBinding,
+        [string] $RawPortAllocation,
+        [string] $RawNumPorts,
+        [string] $DefaultPortBinding,
+        [string] $DefaultPortAllocation,
+        [int]    $DefaultNumPorts
+    )
+
+    $binding = if ($RawPortBinding) { $RawPortBinding } else { $DefaultPortBinding }
+    switch -Regex ($binding) {
+        '^Static$'    { $binding = 'Static' }
+        '^Ephemeral$' { $binding = 'Ephemeral' }
+        default {
+            Write-Warning "Invalid PortBinding ('$binding') for '$PGName': use Static or Ephemeral. Row skipped."
+            return $null
+        }
+    }
+
+    $allocation = if ($RawPortAllocation) { $RawPortAllocation } else { $DefaultPortAllocation }
+    switch -Regex ($allocation) {
+        '^Elastic$' { $allocation = 'Elastic' }
+        '^Fixed$'   { $allocation = 'Fixed' }
+        default {
+            Write-Warning "Invalid PortAllocation ('$allocation') for '$PGName': use Elastic or Fixed. Row skipped."
+            return $null
+        }
+    }
+
+    $numPorts = $DefaultNumPorts
+    if ($RawNumPorts) {
+        if (-not ([int]::TryParse($RawNumPorts, [ref] $numPorts)) -or $numPorts -lt 1 -or $numPorts -gt 8192) {
+            Write-Warning "Invalid NumPorts ('$RawNumPorts') for '$PGName': must be an integer between 1 and 8192. Row skipped."
+            return $null
+        }
+    }
+
+    if ($binding -eq 'Ephemeral') {
+        if ($RawPortAllocation) { Write-Warning "PortAllocation is ignored for '$PGName' because PortBinding is Ephemeral." }
+        if ($RawNumPorts) { Write-Warning "NumPorts is ignored for '$PGName' because PortBinding is Ephemeral." }
+    }
+
+    return [pscustomobject]@{
+        PortBinding    = $binding
+        PortAllocation = $allocation
+        NumPorts       = $numPorts
+    }
 }
 
 # --- Connect to vCenter (password requested interactively) --------------
@@ -138,23 +228,41 @@ try {
 
             $rawVlan = "$($row.VLANID)".Trim()
 
-            if ($rawVlan -match '^(TRUNK|ALL)$') {
-                $portGroups += [pscustomobject]@{ Name = $pgNameCsv; Mode = 'Trunk'; Vlan = $null; TrunkRange = '0-4094' }
+            $vlanInfo = if ($rawVlan -match '^(TRUNK|ALL)$') {
+                @{ Mode = 'Trunk'; Vlan = $null; TrunkRange = '0-4094' }
             }
             elseif ($rawVlan -match '^\d{1,4}$') {
-                $portGroups += [pscustomobject]@{ Name = $pgNameCsv; Mode = 'Access'; Vlan = [int]$rawVlan; TrunkRange = $null }
+                @{ Mode = 'Access'; Vlan = [int]$rawVlan; TrunkRange = $null }
             }
             elseif ((Test-VlanTrunkRange -Range $rawVlan)) {
-                $portGroups += [pscustomobject]@{ Name = $pgNameCsv; Mode = 'Trunk'; Vlan = $null; TrunkRange = ($rawVlan -replace '\s', '') }
+                @{ Mode = 'Trunk'; Vlan = $null; TrunkRange = ($rawVlan -replace '\s', '') }
             }
             else {
                 Write-Warning "Invalid VLANID ('$rawVlan') for '$pgNameCsv': use a number, a range (e.g. 10-20 or 10-20,30-40) or TRUNK/ALL. Row skipped."
+                $null
+            }
+            if (-not $vlanInfo) { continue }
+
+            $opts = Resolve-PortGroupOptions -PGName $pgNameCsv `
+                        -RawPortBinding "$($row.PortBinding)".Trim() -RawPortAllocation "$($row.PortAllocation)".Trim() -RawNumPorts "$($row.NumPorts)".Trim() `
+                        -DefaultPortBinding $PortBinding -DefaultPortAllocation $PortAllocation -DefaultNumPorts $NumPorts
+            if (-not $opts) { continue }
+
+            $portGroups += [pscustomobject]@{
+                Name = $pgNameCsv; Mode = $vlanInfo.Mode; Vlan = $vlanInfo.Vlan; TrunkRange = $vlanInfo.TrunkRange
+                PortBinding = $opts.PortBinding; PortAllocation = $opts.PortAllocation; NumPorts = $opts.NumPorts
             }
         }
     }
     else {
+        $opts = Resolve-PortGroupOptions -PGName '<VlanIds>' -RawPortBinding '' -RawPortAllocation '' -RawNumPorts '' `
+                    -DefaultPortBinding $PortBinding -DefaultPortAllocation $PortAllocation -DefaultNumPorts $NumPorts
+
         foreach ($vlan in $VlanIds) {
-            $portGroups += [pscustomobject]@{ Name = "$NamePrefix$vlan"; Mode = 'Access'; Vlan = $vlan; TrunkRange = $null }
+            $portGroups += [pscustomobject]@{
+                Name = "$NamePrefix$vlan"; Mode = 'Access'; Vlan = $vlan; TrunkRange = $null
+                PortBinding = $opts.PortBinding; PortAllocation = $opts.PortAllocation; NumPorts = $opts.NumPorts
+            }
         }
     }
 
@@ -176,16 +284,31 @@ try {
         }
 
         $vlanLabel = if ($item.Mode -eq 'Trunk') { "Trunk $($item.TrunkRange)" } else { "VLAN $($item.Vlan)" }
+        $bindingLabel = if ($item.PortBinding -eq 'Static') { "Static/$($item.PortAllocation)" } else { 'Ephemeral' }
 
         try {
             # --- Create the port group with a single VLAN or trunk ------------
-            if ($item.Mode -eq 'Trunk') {
-                $pg = New-VDPortgroup -VDSwitch $vds -Name $pgName -VlanTrunkRange $item.TrunkRange `
-                                      -Notes "Created via script - $vlanLabel" -ErrorAction Stop
+            $ngParams = @{
+                VDSwitch    = $vds
+                Name        = $pgName
+                PortBinding = $item.PortBinding
+                Notes       = "Created via script - $vlanLabel, $bindingLabel"
+                ErrorAction = 'Stop'
             }
-            else {
-                $pg = New-VDPortgroup -VDSwitch $vds -Name $pgName -VlanId $item.Vlan `
-                                      -Notes "Created via script - $vlanLabel" -ErrorAction Stop
+            if ($item.Mode -eq 'Trunk') { $ngParams['VlanTrunkRange'] = $item.TrunkRange }
+            else { $ngParams['VlanId'] = $item.Vlan }
+            if ($item.PortBinding -eq 'Static' -and $item.NumPorts -gt 0) { $ngParams['NumPorts'] = $item.NumPorts }
+
+            $pg = New-VDPortgroup @ngParams
+
+            # --- Port allocation (Elastic/Fixed): only settable via the raw ---
+            # --- vSphere API, no dedicated PowerCLI cmdlet parameter exists ---
+            if ($item.PortBinding -eq 'Static') {
+                $view = Get-View -Id $pg.Id -ErrorAction Stop
+                $spec = New-Object VMware.Vim.DVPortgroupConfigSpec
+                $spec.ConfigVersion = $view.Config.ConfigVersion
+                $spec.AutoExpand = ($item.PortAllocation -eq 'Elastic')
+                $view.ReconfigureDVPortgroup($spec)
             }
 
             # --- Security policy: Reject on all three settings -----------------
@@ -200,11 +323,11 @@ try {
                   Set-VDUplinkTeamingPolicy -LoadBalancingPolicy LoadBalanceLoadBased `
                                             -ErrorAction Stop | Out-Null
 
-            Write-Host "OK  -> '$pgName' ($vlanLabel): security Reject x3, teaming LBT." -ForegroundColor Green
+            Write-Host "OK  -> '$pgName' ($vlanLabel, $bindingLabel): security Reject x3, teaming LBT." -ForegroundColor Green
             $created += $pg
         }
         catch {
-            Write-Host "ERR -> '$pgName' ($vlanLabel): $($_.Exception.Message)" -ForegroundColor Red
+            Write-Host "ERR -> '$pgName' ($vlanLabel, $bindingLabel): $($_.Exception.Message)" -ForegroundColor Red
         }
     }
 
@@ -212,13 +335,19 @@ try {
     if ($created) {
         Write-Host "`n=== Created port groups summary ===" -ForegroundColor Cyan
         $created | ForEach-Object {
-            $sec     = $_ | Get-VDSecurityPolicy
-            $team    = $_ | Get-VDUplinkTeamingPolicy
-            $vlanCfg = $_.VlanConfiguration
-            $vlan    = if ($vlanCfg.PSObject.Properties['Ranges']) { "Trunk $($vlanCfg.Ranges)" } else { "VLAN $($vlanCfg.VlanId)" }
+            $sec       = $_ | Get-VDSecurityPolicy
+            $team      = $_ | Get-VDUplinkTeamingPolicy
+            $vlanCfg   = $_.VlanConfiguration
+            $vlan      = if ($vlanCfg.PSObject.Properties['Ranges']) { "Trunk $($vlanCfg.Ranges)" } else { "VLAN $($vlanCfg.VlanId)" }
+            $allocation = if ($_.PortBinding -eq 'Static') {
+                if ((Get-View -Id $_.Id).Config.AutoExpand) { 'Elastic' } else { 'Fixed' }
+            } else { 'N/A' }
             [pscustomobject]@{
                 PortGroup       = $_.Name
                 Vlan            = $vlan
+                PortBinding     = $_.PortBinding
+                PortAllocation  = $allocation
+                NumPorts        = $_.NumPorts
                 Promiscuous     = $sec.AllowPromiscuous
                 MacChanges      = $sec.MacChanges
                 ForgedTransmits = $sec.ForgedTransmits

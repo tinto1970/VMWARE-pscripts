@@ -1,4 +1,4 @@
-PGName,VLANID
-PG-Server-Web,101
-PG-Server-App,102
-PG-Server-DB,103
+PGName,VLANID,PortBinding,PortAllocation,NumPorts
+PG-Server-Web,101,,,
+PG-Server-App,102,Static,Fixed,16
+PG-Server-DB,103,,,
