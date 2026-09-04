@@ -1,5 +1,4 @@
-nomePG,VLANID
-portagruppo-Web,11
-portagruppo-App,12
-portagruppo-DB,13
-portagruppo-tranc,0..4096
+PGName,VLANID
+PG-Server-Web,101
+PG-Server-App,102
+PG-Server-DB,103

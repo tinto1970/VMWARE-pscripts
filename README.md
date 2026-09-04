@@ -2,38 +2,38 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-scripts vari
+Various scripts.
 
-## Script disponibili
+## Available scripts
 
 ### [New-VDPortgroupFromVlanList](New-VDPortgroupFromVlanList/New-VDPortgroupFromVlanList.ps1)
 
-Crea distributed port group su un vDS a partire da una lista di VLAN ID oppure
-da un file CSV (`nomePG,VLANID`), applicando automaticamente:
+Creates distributed port groups on a vDS from a list of VLAN IDs or from a
+CSV file (`PGName,VLANID`), automatically applying:
 
-- security policy piu' restrittiva (Reject su Promiscuous, MAC Changes, Forged Transmits)
-- teaming basato sul carico della NIC fisica (Route based on physical NIC load, LBT)
+- the most restrictive security policy (Reject on Promiscuous, MAC Changes, Forged Transmits)
+- load-based teaming on the physical NIC (Route based on physical NIC load, LBT)
 
-Gestisce in autonomia connessione e disconnessione al vCenter (richiede il
-modulo VMware PowerCLI). La password viene richiesta interattivamente,
-non va mai passata come parametro.
+Handles vCenter connection and disconnection on its own (requires the
+VMware PowerCLI module). The password is requested interactively and
+should never be passed as a parameter.
 
-Nel CSV la colonna `VLANID` accetta:
+In the CSV, the `VLANID` column accepts:
 
-| Formato                  | Risultato                                   |
-|---------------------------|----------------------------------------------|
-| `101`                      | port group Access sulla VLAN 101              |
-| `TRUNK` oppure `ALL`       | port group trunk su tutte le VLAN (0-4094)    |
-| `10-20` oppure `10-20,30-40` | port group trunk sul range indicato        |
+| Format                        | Result                                     |
+|--------------------------------|---------------------------------------------|
+| `101`                           | Access port group on VLAN 101               |
+| `TRUNK` or `ALL`                | trunk port group on all VLANs (0-4094)      |
+| `10-20` or `10-20,30-40`        | trunk port group on the given range         |
 
 ```powershell
-# da lista di VLAN
+# from a list of VLANs
 .\New-VDPortgroupFromVlanList.ps1 -vCenter vcenter.lab.local -Username 'administrator@vsphere.local' -VDSwitchName 'vDS-Prod' -VlanIds 10,20,30
 
-# da file CSV (colonne: nomePG,VLANID) - supporta anche trunk (TRUNK/ALL o range)
+# from a CSV file (columns: PGName,VLANID) - also supports trunk (TRUNK/ALL or range)
 .\New-VDPortgroupFromVlanList.ps1 -vCenter vcenter.lab.local -Username 'administrator@vsphere.local' -VDSwitchName 'vDS-Prod' -CsvPath .\portgroups-example.csv
 ```
 
 ## License
 
-Distribuito sotto licenza [MIT](LICENSE).
+Distributed under the [MIT](LICENSE) license.

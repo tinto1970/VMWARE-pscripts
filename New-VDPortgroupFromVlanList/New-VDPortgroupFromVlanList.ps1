@@ -1,43 +1,43 @@
 <#
 .SYNOPSIS
-    Crea distributed port group su un vDS a partire da una lista di VLAN ID,
-    applicando la security policy piu' restrittiva (Reject su tutti e tre i
-    settaggi) e il teaming basato sul carico della NIC fisica (LBT).
+    Creates distributed port groups on a vDS from a list of VLAN IDs,
+    applying the most restrictive security policy (Reject on all three
+    settings) and load-based teaming on the physical NIC (LBT).
 
 .PARAMETER vCenter
-    Nome (o FQDN) del vCenter Server a cui connettersi.
+    Name (or FQDN) of the vCenter Server to connect to.
 
 .PARAMETER Username
-    Utente con cui autenticarsi al vCenter. La password viene richiesta
-    interattivamente durante l'esecuzione (non va passata come parametro).
+    User to authenticate to vCenter with. The password is requested
+    interactively during execution (never pass it as a parameter).
 
 .PARAMETER VDSwitchName
-    Nome del vDS su cui creare i port group.
+    Name of the vDS on which to create the port groups.
 
 .PARAMETER VlanIds
-    Lista di VLAN ID (es. 10,20,30 oppure 100..110). I nomi dei PG vengono
-    generati come '<NamePrefix><VlanId>'. Alternativo a -CsvPath.
+    List of VLAN IDs (e.g. 10,20,30 or 100..110). PG names are generated
+    as '<NamePrefix><VlanId>'. Alternative to -CsvPath.
 
 .PARAMETER NamePrefix
-    Prefisso del nome dei PG quando si usa -VlanIds. Default 'PG-VLAN-' ->
+    Prefix for the PG name when using -VlanIds. Default 'PG-VLAN-' ->
     'PG-VLAN-10', 'PG-VLAN-20', ...
 
 .PARAMETER CsvPath
-    Percorso di un file CSV con le colonne 'nomePG' e 'VLANID' (una riga per
-    port group, nome libero non derivato dalla VLAN). Alternativo a -VlanIds.
-    La colonna VLANID accetta tre formati:
-      - un numero singolo (0-4094)          -> port group in modalita' Access
-      - la parola chiave TRUNK oppure ALL    -> trunk completo, range 0-4094
-      - un range esplicito (es. 10-20 oppure 10-20,30-40) -> trunk sul range indicato
-    Esempio di contenuto:
-        nomePG,VLANID
+    Path to a CSV file with columns 'PGName' and 'VLANID' (one row per
+    port group, free-form name not derived from the VLAN). Alternative
+    to -VlanIds. The VLANID column accepts three formats:
+      - a single number (0-4094)             -> port group in Access mode
+      - the keyword TRUNK or ALL              -> full trunk, range 0-4094
+      - an explicit range (e.g. 10-20 or 10-20,30-40) -> trunk on that range
+    Example content:
+        PGName,VLANID
         PG-Server-Web,101
         PG-Server-DB,102
         PG-Trunk-Full,TRUNK
-        PG-Trunk-Parziale,10-20,30-40
+        PG-Trunk-Partial,10-20,30-40
 
 .EXAMPLE
-    .\New-VDPortgroupFromVlanList.ps1 -vCenter vcenter.lab.local -Username 'lab\amministratore' -VDSwitchName 'vDS-Prod' -VlanIds 10,20,30
+    .\New-VDPortgroupFromVlanList.ps1 -vCenter vcenter.lab.local -Username 'lab\administrator' -VDSwitchName 'vDS-Prod' -VlanIds 10,20,30
 
 .EXAMPLE
     .\New-VDPortgroupFromVlanList.ps1 -vCenter vcenter.lab.local -Username 'administrator@vsphere.local' -VDSwitchName 'vDS-Prod' -VlanIds (100..110) -NamePrefix 'APP-VLAN-'
@@ -46,10 +46,11 @@
     .\New-VDPortgroupFromVlanList.ps1 -vCenter vcenter.lab.local -Username 'administrator@vsphere.local' -VDSwitchName 'vDS-Prod' -CsvPath '.\portgroups.csv'
 
 .NOTES
-    Richiede VMware PowerCLI. Lo script gestisce autonomamente connessione e
-    disconnessione al vCenter (Connect-VIServer / Disconnect-VIServer).
-    LBT (LoadBalanceLoadBased) mantiene attivi tutti gli uplink ereditati dal vDS
-    e NON richiede configurazione lato switch fisico (no EtherChannel/LACP).
+    Requires VMware PowerCLI. The script handles vCenter connection and
+    disconnection on its own (Connect-VIServer / Disconnect-VIServer).
+    LBT (LoadBalanceLoadBased) keeps all uplinks inherited from the vDS
+    active and does NOT require any physical switch configuration
+    (no EtherChannel/LACP).
 #>
 
 [CmdletBinding(DefaultParameterSetName = 'ByVlanList')]
@@ -73,7 +74,7 @@ param(
     [string]  $CsvPath
 )
 
-# --- Validazione di un range/lista di VLAN per il trunk (es. "10-20,30-40") ---
+# --- Validates a VLAN range/list for trunk mode (e.g. "10-20,30-40") ----
 function Test-VlanTrunkRange {
     param([string] $Range)
 
@@ -94,44 +95,44 @@ function Test-VlanTrunkRange {
     return $true
 }
 
-# --- Connessione a vCenter (password richiesta interattivamente) --------
+# --- Connect to vCenter (password requested interactively) --------------
 if (-not (Get-Module -ListAvailable -Name VMware.PowerCLI -ErrorAction SilentlyContinue)) {
-    throw "Modulo VMware.PowerCLI non trovato. Installalo con: Install-Module VMware.PowerCLI"
+    throw "VMware.PowerCLI module not found. Install it with: Install-Module VMware.PowerCLI"
 }
 Import-Module VMware.PowerCLI -ErrorAction Stop
 
-$securePassword = Read-Host -Prompt "Password per $Username" -AsSecureString
+$securePassword = Read-Host -Prompt "Password for $Username" -AsSecureString
 $credential = New-Object System.Management.Automation.PSCredential ($Username, $securePassword)
 
 try {
     $viConnection = Connect-VIServer -Server $vCenter -Credential $credential -ErrorAction Stop
-    Write-Host "Connesso a '$vCenter' come '$Username'." -ForegroundColor Green
+    Write-Host "Connected to '$vCenter' as '$Username'." -ForegroundColor Green
 }
 catch {
-    throw "Connessione a '$vCenter' fallita: $($_.Exception.Message)"
+    throw "Connection to '$vCenter' failed: $($_.Exception.Message)"
 }
 
 try {
-    # --- Recupero del vDS ------------------------------------------------
+    # --- Retrieve the vDS -------------------------------------------------
     $vds = Get-VDSwitch -Name $VDSwitchName -ErrorAction Stop
 
-    # --- Costruzione della lista port group da creare ---------------------
+    # --- Build the list of port groups to create ---------------------------
     $portGroups = @()
 
     if ($PSCmdlet.ParameterSetName -eq 'ByCsv') {
         if (-not (Test-Path -Path $CsvPath -PathType Leaf)) {
-            throw "File CSV non trovato: $CsvPath"
+            throw "CSV file not found: $CsvPath"
         }
 
         $rows = Import-Csv -Path $CsvPath -ErrorAction Stop
         foreach ($row in $rows) {
-            if (-not $row.PSObject.Properties['nomePG'] -or -not $row.PSObject.Properties['VLANID']) {
-                throw "Il CSV deve avere le colonne 'nomePG' e 'VLANID'."
+            if (-not $row.PSObject.Properties['PGName'] -or -not $row.PSObject.Properties['VLANID']) {
+                throw "The CSV must have the columns 'PGName' and 'VLANID'."
             }
 
-            $pgNameCsv = "$($row.nomePG)".Trim()
+            $pgNameCsv = "$($row.PGName)".Trim()
             if (-not $pgNameCsv) {
-                Write-Warning "Riga CSV con nomePG vuoto: saltata."
+                Write-Warning "CSV row with empty PGName: skipped."
                 continue
             }
 
@@ -147,7 +148,7 @@ try {
                 $portGroups += [pscustomobject]@{ Name = $pgNameCsv; Mode = 'Trunk'; Vlan = $null; TrunkRange = ($rawVlan -replace '\s', '') }
             }
             else {
-                Write-Warning "VLANID non valido ('$rawVlan') per '$pgNameCsv': usa un numero, un range (es. 10-20 o 10-20,30-40) oppure TRUNK/ALL. Riga saltata."
+                Write-Warning "Invalid VLANID ('$rawVlan') for '$pgNameCsv': use a number, a range (e.g. 10-20 or 10-20,30-40) or TRUNK/ALL. Row skipped."
             }
         }
     }
@@ -162,39 +163,39 @@ try {
     foreach ($item in $portGroups) {
         $pgName = $item.Name
 
-        # --- Validazione range VLAN (solo modalita' Access) ----------------
+        # --- VLAN range validation (Access mode only) -----------------------
         if ($item.Mode -eq 'Access' -and ($item.Vlan -lt 0 -or $item.Vlan -gt 4094)) {
-            Write-Warning "VLAN $($item.Vlan) fuori range (0-4094) per '$pgName': saltata."
+            Write-Warning "VLAN $($item.Vlan) out of range (0-4094) for '$pgName': skipped."
             continue
         }
 
-        # --- Idempotenza: salta se il PG esiste gia' -----------------------
+        # --- Idempotency: skip if the PG already exists ---------------------
         if (Get-VDPortgroup -VDSwitch $vds -Name $pgName -ErrorAction SilentlyContinue) {
-            Write-Warning "Port group '$pgName' gia' esistente: saltato."
+            Write-Warning "Port group '$pgName' already exists: skipped."
             continue
         }
 
         $vlanLabel = if ($item.Mode -eq 'Trunk') { "Trunk $($item.TrunkRange)" } else { "VLAN $($item.Vlan)" }
 
         try {
-            # --- Creazione del port group con VLAN singola o trunk -----------
+            # --- Create the port group with a single VLAN or trunk ------------
             if ($item.Mode -eq 'Trunk') {
                 $pg = New-VDPortgroup -VDSwitch $vds -Name $pgName -VlanTrunkRange $item.TrunkRange `
-                                      -Notes "Creato via script - $vlanLabel" -ErrorAction Stop
+                                      -Notes "Created via script - $vlanLabel" -ErrorAction Stop
             }
             else {
                 $pg = New-VDPortgroup -VDSwitch $vds -Name $pgName -VlanId $item.Vlan `
-                                      -Notes "Creato via script - $vlanLabel" -ErrorAction Stop
+                                      -Notes "Created via script - $vlanLabel" -ErrorAction Stop
             }
 
-            # --- Security policy: Reject su tutti e tre i settaggi -----------
+            # --- Security policy: Reject on all three settings -----------------
             $pg | Get-VDSecurityPolicy |
                   Set-VDSecurityPolicy -AllowPromiscuous $false `
                                        -MacChanges       $false `
                                        -ForgedTransmits  $false `
                                        -ErrorAction Stop | Out-Null
 
-            # --- Teaming: Route based on physical NIC load (LBT) ------------
+            # --- Teaming: Route based on physical NIC load (LBT) ---------------
             $pg | Get-VDUplinkTeamingPolicy |
                   Set-VDUplinkTeamingPolicy -LoadBalancingPolicy LoadBalanceLoadBased `
                                             -ErrorAction Stop | Out-Null
@@ -207,9 +208,9 @@ try {
         }
     }
 
-    # --- Riepilogo finale con read-back dei settaggi applicati --------------
+    # --- Final summary with read-back of applied settings --------------------
     if ($created) {
-        Write-Host "`n=== Riepilogo port group creati ===" -ForegroundColor Cyan
+        Write-Host "`n=== Created port groups summary ===" -ForegroundColor Cyan
         $created | ForEach-Object {
             $sec     = $_ | Get-VDSecurityPolicy
             $team    = $_ | Get-VDUplinkTeamingPolicy
@@ -227,9 +228,9 @@ try {
     }
 }
 finally {
-    # --- Disconnessione dal vCenter (sempre, anche in caso di errore) ---
+    # --- Disconnect from vCenter (always, even on error) -----------------
     if ($viConnection) {
         Disconnect-VIServer -Server $viConnection -Confirm:$false -ErrorAction SilentlyContinue
-        Write-Host "Disconnesso da '$vCenter'." -ForegroundColor Cyan
+        Write-Host "Disconnected from '$vCenter'." -ForegroundColor Cyan
     }
 }

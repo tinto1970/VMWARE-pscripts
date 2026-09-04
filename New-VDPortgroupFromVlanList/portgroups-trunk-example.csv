@@ -1,4 +1,4 @@
-nomePG,VLANID
+PGName,VLANID
 PG-Server-Web,101
 PG-Trunk-Full,TRUNK
-PG-Trunk-Parziale,10-20,30-40
+PG-Trunk-Partial,10-20,30-40
