@@ -1,0 +1,2 @@
+# VMWARE-pscripts
+scripts vari
