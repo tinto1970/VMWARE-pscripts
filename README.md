@@ -1,4 +1,7 @@
 # VMWARE-pscripts
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 scripts vari
 
 ## Script disponibili
@@ -22,3 +25,7 @@ non va mai passata come parametro.
 # da file CSV (colonne: nomePG,VLANID)
 .\New-VDPortgroupFromVlanList.ps1 -vCenter vcenter.lab.local -Username 'administrator@vsphere.local' -VDSwitchName 'vDS-Prod' -CsvPath .\portgroups-example.csv
 ```
+
+## License
+
+Distribuito sotto licenza [MIT](LICENSE).
