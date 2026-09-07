@@ -185,11 +185,21 @@ function Resolve-PortGroupOptions {
     }
 }
 
-# --- Connect to vCenter (password requested interactively) --------------
-if (-not (Get-Module -ListAvailable -Name VMware.PowerCLI -ErrorAction SilentlyContinue)) {
-    throw "VMware.PowerCLI module not found. Install it with: Install-Module VMware.PowerCLI"
+# --- Ensure PowerCLI is available. Checked by cmdlet, not by module ------
+# --- name: PowerCLI packaging varies (VMware.PowerCLI, VCF.PowerCLI, or ---
+# --- per-component modules such as VMware.PowerCLI.vCenter), so a fixed --
+# --- module-name check would fail even when PowerCLI is installed. -------
+if (-not (Get-Command -Name Connect-VIServer -ErrorAction SilentlyContinue)) {
+    foreach ($candidate in 'VCF.PowerCLI', 'VMware.PowerCLI') {
+        if (Get-Module -ListAvailable -Name $candidate -ErrorAction SilentlyContinue) {
+            Import-Module $candidate -ErrorAction SilentlyContinue
+            break
+        }
+    }
 }
-Import-Module VMware.PowerCLI -ErrorAction Stop
+if (-not (Get-Command -Name Connect-VIServer -ErrorAction SilentlyContinue)) {
+    throw "PowerCLI not found (Connect-VIServer is unavailable). Install it with: Install-Module VMware.PowerCLI"
+}
 
 $securePassword = Read-Host -Prompt "Password for $Username" -AsSecureString
 $credential = New-Object System.Management.Automation.PSCredential ($Username, $securePassword)
