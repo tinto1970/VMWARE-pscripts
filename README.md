@@ -66,9 +66,9 @@ regardless of whether it's packaged as `VMware.PowerCLI` or
 `VCF.PowerCLI`).
 
 ```powershell
-.\Get-EsxiHostConfig.ps1 -vCenter vcenter01.dominio.local -EsxiHost esxi01.dominio.local
+.\Get-EsxiHostConfig.ps1 -vCenter vcenter01.domain.local -EsxiHost esxi01.domain.local
 
-.\Get-EsxiHostConfig.ps1 -vCenter 10.0.0.10 -EsxiHost esxi02.dominio.local -OutputFolder C:\Report
+.\Get-EsxiHostConfig.ps1 -vCenter 10.0.0.10 -EsxiHost esxi02.domain.local -OutputFolder C:\Report
 ```
 
 The report is saved as `EsxiConfig_<host>_<timestamp>.txt` in the folder
