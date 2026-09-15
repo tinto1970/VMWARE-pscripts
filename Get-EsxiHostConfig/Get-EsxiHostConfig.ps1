@@ -1,28 +1,28 @@
 <#
 .SYNOPSIS
-    Estrae la configurazione completa di un host ESXi collegandosi a un vCenter e la salva
-    in un report testuale leggibile.
+    Extracts the full configuration of an ESXi host by connecting to a vCenter and saves
+    it to a readable text report.
 
 .DESCRIPTION
-    Lo script si collega al vCenter Server specificato (credenziali richieste in modo
-    interattivo e sicuro), individua l'host ESXi indicato e raccoglie in un unico report
-    tutte le informazioni di configurazione disponibili: hardware, rete, storage, servizi,
-    sicurezza, impostazioni avanzate, macchine virtuali ospitate, ecc.
+    The script connects to the specified vCenter Server (credentials requested
+    interactively and securely), locates the given ESXi host and collects all available
+    configuration information into a single report: hardware, network, storage, services,
+    security, advanced settings, hosted virtual machines, etc.
 
 .PARAMETER vCenter
-    FQDN o indirizzo IP del vCenter Server a cui collegarsi.
+    FQDN or IP address of the vCenter Server to connect to.
 
 .PARAMETER EsxiHost
-    Nome (FQDN come mostrato in vCenter) dell'host ESXi di cui estrarre la configurazione.
+    Name (FQDN as shown in vCenter) of the ESXi host to extract the configuration from.
 
 .PARAMETER OutputFolder
-    Cartella in cui salvare il report. Default: cartella corrente.
+    Folder where the report will be saved. Default: current folder.
 
 .EXAMPLE
-    .\Get-EsxiHostConfig.ps1 -vCenter vcenter01.dominio.local -EsxiHost esxi01.dominio.local
+    .\Get-EsxiHostConfig.ps1 -vCenter vcenter01.domain.local -EsxiHost esxi01.domain.local
 
 .EXAMPLE
-    .\Get-EsxiHostConfig.ps1 -vCenter 10.0.0.10 -EsxiHost esxi02.dominio.local -OutputFolder C:\Report
+    .\Get-EsxiHostConfig.ps1 -vCenter 10.0.0.10 -EsxiHost esxi02.domain.local -OutputFolder C:\Report
 #>
 
 [CmdletBinding()]
@@ -40,7 +40,7 @@ param(
 $ErrorActionPreference = 'Stop'
 
 # ----------------------------------------------------------------------------------
-# Funzioni di supporto per la scrittura del report
+# Helper functions for writing the report
 # ----------------------------------------------------------------------------------
 
 $script:ReportLines = New-Object System.Collections.Generic.List[string]
@@ -68,7 +68,7 @@ function Write-ReportObject {
     param($InputObject, [string]$FormatAs = 'List')
 
     if ($null -eq $InputObject -or ($InputObject -is [array] -and $InputObject.Count -eq 0)) {
-        $script:ReportLines.Add('(nessun dato disponibile)')
+        $script:ReportLines.Add('(no data available)')
         return
     }
 
@@ -77,9 +77,9 @@ function Write-ReportObject {
         $script:ReportLines.Add($text.TrimEnd())
     }
     elseif ($FormatAs -eq 'KeyValue') {
-        # Formato compatto "Nome : Valore", una riga per elemento: a differenza di
-        # Format-Table -AutoSize non allarga tutte le righe in base al valore piu' lungo
-        # dell'intero elenco, quindi resta leggibile anche con centinaia di impostazioni.
+        # Compact "Name : Value" format, one line per item: unlike Format-Table -AutoSize
+        # it doesn't widen every row based on the longest value in the whole list, so it
+        # stays readable even with hundreds of settings.
         foreach ($item in $InputObject) {
             $script:ReportLines.Add(("{0,-50} : {1}" -f $item.Name, $item.Value))
         }
@@ -92,9 +92,9 @@ function Write-ReportObject {
 
 function Invoke-ReportSection {
     <#
-        Esegue uno scriptblock che raccoglie i dati di una sezione e li scrive nel report.
-        Se lo scriptblock fallisce, l'errore viene annotato nel report senza interrompere
-        l'esecuzione dello script.
+        Runs a scriptblock that collects a section's data and writes it to the report.
+        If the scriptblock fails, the error is noted in the report without interrupting
+        the rest of the script.
     #>
     param(
         [string]$Title,
@@ -115,20 +115,19 @@ function Invoke-ReportSection {
         Write-ReportObject -InputObject $data -FormatAs $FormatAs
     }
     catch {
-        Write-ReportText "ERRORE durante la raccolta di questa sezione: $($_.Exception.Message)"
+        Write-ReportText "ERROR while collecting this section: $($_.Exception.Message)"
     }
 }
 
 # ----------------------------------------------------------------------------------
-# Verifica / caricamento modulo PowerCLI
+# PowerCLI module check / import
 # ----------------------------------------------------------------------------------
 
-Write-Host "Verifica disponibilita' di PowerCLI..." -ForegroundColor Cyan
+Write-Host "Checking PowerCLI availability..." -ForegroundColor Cyan
 
-# Il controllo si basa sul cmdlet Connect-VIServer e non su un nome di modulo fisso:
-# PowerCLI puo' essere pacchettizzato come VMware.PowerCLI o VCF.PowerCLI a seconda
-# della versione, quindi un controllo sul solo nome del modulo fallirebbe anche quando
-# PowerCLI e' effettivamente installato.
+# The check relies on the Connect-VIServer cmdlet rather than a fixed module name:
+# PowerCLI can be packaged as VMware.PowerCLI or VCF.PowerCLI depending on the version,
+# so checking only the module name would fail even when PowerCLI is actually installed.
 if (-not (Get-Command -Name Connect-VIServer -ErrorAction SilentlyContinue)) {
     foreach ($candidate in 'VCF.PowerCLI', 'VMware.PowerCLI') {
         if (Get-Module -ListAvailable -Name $candidate -ErrorAction SilentlyContinue) {
@@ -139,62 +138,62 @@ if (-not (Get-Command -Name Connect-VIServer -ErrorAction SilentlyContinue)) {
 }
 
 if (-not (Get-Command -Name Connect-VIServer -ErrorAction SilentlyContinue)) {
-    Write-Host "PowerCLI non risulta installato (cmdlet Connect-VIServer non disponibile)." -ForegroundColor Yellow
-    Write-Host "Installalo con: Install-Module -Name VMware.PowerCLI -Scope CurrentUser" -ForegroundColor Yellow
-    throw "PowerCLI mancante."
+    Write-Host "PowerCLI does not appear to be installed (Connect-VIServer cmdlet not available)." -ForegroundColor Yellow
+    Write-Host "Install it with: Install-Module -Name VMware.PowerCLI -Scope CurrentUser" -ForegroundColor Yellow
+    throw "PowerCLI not found."
 }
 
-# Evita prompt di conferma per certificati non attendibili (comune con vCenter self-signed)
-# e disabilita la partecipazione al CEIP senza chiedere conferma interattiva.
+# Avoids confirmation prompts for untrusted certificates (common with self-signed vCenters)
+# and disables CEIP participation without an interactive confirmation prompt.
 Set-PowerCLIConfiguration -InvalidCertificateAction Ignore -ParticipateInCEIP $false -Scope Session -Confirm:$false | Out-Null
 
 # ----------------------------------------------------------------------------------
-# Credenziali e connessione al vCenter
+# Credentials and connection to vCenter
 # ----------------------------------------------------------------------------------
 
-Write-Host "Connessione a vCenter '$vCenter'..." -ForegroundColor Cyan
-$cred = Get-Credential -Message "Credenziali per la connessione a $vCenter"
+Write-Host "Connecting to vCenter '$vCenter'..." -ForegroundColor Cyan
+$cred = Get-Credential -Message "Credentials for connecting to $vCenter"
 
 if (-not $cred) {
-    throw "Nessuna credenziale fornita. Script interrotto."
+    throw "No credentials provided. Script aborted."
 }
 
 $viConnection = Connect-VIServer -Server $vCenter -Credential $cred -ErrorAction Stop
-Write-Host "Connesso a $($viConnection.Name) (versione $($viConnection.Version) build $($viConnection.Build))" -ForegroundColor Green
+Write-Host "Connected to $($viConnection.Name) (version $($viConnection.Version) build $($viConnection.Build))" -ForegroundColor Green
 
 try {
     # ------------------------------------------------------------------------------
-    # Recupero dell'host ESXi
+    # Retrieve the ESXi host
     # ------------------------------------------------------------------------------
 
-    Write-Host "Ricerca host ESXi '$EsxiHost'..." -ForegroundColor Cyan
+    Write-Host "Looking up ESXi host '$EsxiHost'..." -ForegroundColor Cyan
     $vmhost = Get-VMHost -Name $EsxiHost -ErrorAction Stop
     $hostView = $vmhost | Get-View
 
-    Write-Host "Host trovato. Avvio raccolta configurazione..." -ForegroundColor Green
+    Write-Host "Host found. Starting configuration collection..." -ForegroundColor Green
 
-    Write-ReportText "REPORT DI CONFIGURAZIONE HOST ESXI"
-    Write-ReportText "Host ESXi     : $($vmhost.Name)"
+    Write-ReportText "ESXI HOST CONFIGURATION REPORT"
+    Write-ReportText "ESXi Host     : $($vmhost.Name)"
     Write-ReportText "vCenter       : $vCenter"
-    Write-ReportText "Data raccolta : $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
-    Write-ReportText "Utente        : $($cred.UserName)"
+    Write-ReportText "Collected on  : $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
+    Write-ReportText "User          : $($cred.UserName)"
 
     # ------------------------------------------------------------------------------
-    # 1. Informazioni generali / hardware
+    # 1. General information / hardware
     # ------------------------------------------------------------------------------
 
-    Invoke-ReportSection -Title "INFORMAZIONI GENERALI" -Collector {
+    Invoke-ReportSection -Title "GENERAL INFORMATION" -Collector {
         $vmhost | Select-Object Name, Parent, ConnectionState, PowerState,
             Version, Build, Manufacturer, Model,
             @{N = 'ProcessorType'; E = { $_.ProcessorType } },
             NumCpu, CpuTotalMhz, CpuUsageMhz,
             @{N = 'MemoryTotalGB'; E = { [math]::Round($_.MemoryTotalGB, 2) } },
             @{N = 'MemoryUsageGB'; E = { [math]::Round($_.MemoryUsageGB, 2) } },
-            @{N = 'Uptime (giorni)'; E = { [math]::Round(((Get-Date) - $_.ExtensionData.Runtime.BootTime).TotalDays, 1) } },
+            @{N = 'Uptime (days)'; E = { [math]::Round(((Get-Date) - $_.ExtensionData.Runtime.BootTime).TotalDays, 1) } },
             @{N = 'BootTime'; E = { $_.ExtensionData.Runtime.BootTime } }
     }
 
-    Invoke-ReportSection -Title "BIOS / Hardware dettagliato" -SubSection -Collector {
+    Invoke-ReportSection -Title "BIOS / Detailed hardware" -SubSection -Collector {
         [PSCustomObject]@{
             BiosVersion      = $hostView.Hardware.BiosInfo.BiosVersion
             BiosReleaseDate  = $hostView.Hardware.BiosInfo.ReleaseDate
@@ -209,7 +208,7 @@ try {
         }
     }
 
-    Invoke-ReportSection -Title "Stato manutenzione / Lockdown / Fault Tolerance" -SubSection -Collector {
+    Invoke-ReportSection -Title "Maintenance / Lockdown / Fault Tolerance status" -SubSection -Collector {
         [PSCustomObject]@{
             InMaintenanceMode = $vmhost.ExtensionData.Runtime.InMaintenanceMode
             LockdownMode      = $hostView.Config.LockdownMode
@@ -218,7 +217,7 @@ try {
     }
 
     # ------------------------------------------------------------------------------
-    # 2. Licenza
+    # 2. Licensing
     # ------------------------------------------------------------------------------
 
     Invoke-ReportSection -Title "LICENSING" -Collector {
@@ -227,66 +226,66 @@ try {
     }
 
     # ------------------------------------------------------------------------------
-    # 3. Data / Ora / NTP
+    # 3. Date / Time / NTP
     # ------------------------------------------------------------------------------
 
-    Invoke-ReportSection -Title "DATA, ORA E NTP" -Collector {
+    Invoke-ReportSection -Title "DATE, TIME AND NTP" -Collector {
         $tz = $hostView.Config.DateTimeInfo.TimeZone
         $dateTimeSystem = Get-View -Id $vmhost.ExtensionData.ConfigManager.DateTimeSystem -ErrorAction SilentlyContinue
-        $oraCorrente = if ($dateTimeSystem) { $dateTimeSystem.QueryDateTime() } else { $null }
+        $currentTime = if ($dateTimeSystem) { $dateTimeSystem.QueryDateTime() } else { $null }
 
         [PSCustomObject]@{
-            TimeZone     = "$($tz.Name) - $($tz.Description) (offset GMT: $($tz.GmtOffset)s)"
-            OraCorrente  = $oraCorrente
+            TimeZone     = "$($tz.Name) - $($tz.Description) (GMT offset: $($tz.GmtOffset)s)"
+            CurrentTime  = $currentTime
             NtpServers   = (($vmhost | Get-VMHostNtpServer -ErrorAction SilentlyContinue) -join ', ')
         }
     }
 
-    Invoke-ReportSection -Title "Servizio NTP (stato)" -SubSection -Collector {
+    Invoke-ReportSection -Title "NTP service (status)" -SubSection -Collector {
         $vmhost | Get-VMHostService -ErrorAction SilentlyContinue |
             Where-Object { $_.Key -eq 'ntpd' } |
             Select-Object Label, Key, Running, Policy
     }
 
     # ------------------------------------------------------------------------------
-    # 4. Rete
+    # 4. Network
     # ------------------------------------------------------------------------------
 
-    Invoke-ReportSection -Title "RETE" -Collector { "Dettaglio nelle sottosezioni seguenti." }
+    Invoke-ReportSection -Title "NETWORK" -Collector { "See the subsections below for details." }
 
-    Invoke-ReportSection -Title "Configurazione di rete host (DNS/Gateway/Hostname)" -SubSection -Collector {
+    Invoke-ReportSection -Title "Host network configuration (DNS/Gateway/Hostname)" -SubSection -Collector {
         $netInfo = $vmhost | Get-VMHostNetwork -ErrorAction SilentlyContinue
         $netInfo | Select-Object HostName, DomainName, DnsAddress, SearchDomain,
             VMKernelGateway, ConsoleGateway
     }
 
-    Invoke-ReportSection -Title "Virtual Switch Standard" -SubSection -FormatAs Table -Collector {
+    Invoke-ReportSection -Title "Standard Virtual Switches" -SubSection -FormatAs Table -Collector {
         $vmhost | Get-VirtualSwitch -Standard -ErrorAction SilentlyContinue |
             Select-Object Name, NumPorts, Mtu, @{N = 'NIC'; E = { ($_.Nic -join ', ') } }
     }
 
-    Invoke-ReportSection -Title "Virtual Switch Distribuiti (associati)" -SubSection -FormatAs Table -Collector {
+    Invoke-ReportSection -Title "Distributed Virtual Switches (attached)" -SubSection -FormatAs Table -Collector {
         $vmhost | Get-VDSwitch -ErrorAction SilentlyContinue |
             Select-Object Name, NumUplinkPorts, Mtu, Version
     }
 
-    Invoke-ReportSection -Title "Port Group" -SubSection -FormatAs Table -Collector {
+    Invoke-ReportSection -Title "Port Groups" -SubSection -FormatAs Table -Collector {
         $vmhost | Get-VirtualPortGroup -ErrorAction SilentlyContinue |
             Select-Object Name, VirtualSwitch, VLanId
     }
 
-    Invoke-ReportSection -Title "Adattatori di rete fisici (vmnic)" -SubSection -FormatAs Table -Collector {
+    Invoke-ReportSection -Title "Physical network adapters (vmnic)" -SubSection -FormatAs Table -Collector {
         $vmhost | Get-VMHostNetworkAdapter -Physical -ErrorAction SilentlyContinue |
             Select-Object Name, Mac, BitRatePerSec, FullDuplex, Status
     }
 
-    Invoke-ReportSection -Title "Adattatori VMkernel (vmk)" -SubSection -FormatAs Table -Collector {
+    Invoke-ReportSection -Title "VMkernel adapters (vmk)" -SubSection -FormatAs Table -Collector {
         $vmhost | Get-VMHostNetworkAdapter -VMKernel -ErrorAction SilentlyContinue |
             Select-Object Name, PortGroupName, IP, SubnetMask, Mac, Mtu,
                 VMotionEnabled, ManagementTrafficEnabled, FaultToleranceLoggingEnabled, VsanTrafficEnabled
     }
 
-    Invoke-ReportSection -Title "Routing statico" -SubSection -FormatAs Table -Collector {
+    Invoke-ReportSection -Title "Static routing" -SubSection -FormatAs Table -Collector {
         $hostView.Config.Network.RouteTableInfo.IpRoute |
             Select-Object @{N = 'Network'; E = { $_.Network } },
                 @{N = 'PrefixLength'; E = { $_.PrefixLength } },
@@ -297,16 +296,16 @@ try {
     # 5. Storage
     # ------------------------------------------------------------------------------
 
-    Invoke-ReportSection -Title "STORAGE" -Collector { "Dettaglio nelle sottosezioni seguenti." }
+    Invoke-ReportSection -Title "STORAGE" -Collector { "See the subsections below for details." }
 
-    Invoke-ReportSection -Title "Datastore" -SubSection -FormatAs Table -Collector {
+    Invoke-ReportSection -Title "Datastores" -SubSection -FormatAs Table -Collector {
         $vmhost | Get-Datastore -ErrorAction SilentlyContinue |
             Select-Object Name, Type,
                 @{N = 'CapacityGB'; E = { [math]::Round($_.CapacityGB, 1) } },
                 @{N = 'FreeSpaceGB'; E = { [math]::Round($_.FreeSpaceGB, 1) } }
     }
 
-    Invoke-ReportSection -Title "Adattatori Storage (HBA)" -SubSection -FormatAs Table -Collector {
+    Invoke-ReportSection -Title "Storage adapters (HBA)" -SubSection -FormatAs Table -Collector {
         $vmhost | Get-VMHostHba -ErrorAction SilentlyContinue |
             Select-Object Device, Type, Model, Status, Driver
     }
@@ -323,29 +322,29 @@ try {
                 MultipathPolicy, IsSsd
     }
 
-    Invoke-ReportSection -Title "Multipathing (esempio primi 20 path)" -SubSection -FormatAs Table -Collector {
+    Invoke-ReportSection -Title "Multipathing (first 20 paths as a sample)" -SubSection -FormatAs Table -Collector {
         $vmhost | Get-ScsiLun -ErrorAction SilentlyContinue |
             Get-ScsiLunPath -ErrorAction SilentlyContinue |
             Select-Object -First 20 SanID, State, Preferred
     }
 
     # ------------------------------------------------------------------------------
-    # 6. Servizi e Sicurezza
+    # 6. Services and Security
     # ------------------------------------------------------------------------------
 
-    Invoke-ReportSection -Title "SERVIZI" -FormatAs Table -Collector {
+    Invoke-ReportSection -Title "SERVICES" -FormatAs Table -Collector {
         $vmhost | Get-VMHostService -ErrorAction SilentlyContinue |
             Select-Object Label, Key, Running, Policy
     }
 
-    Invoke-ReportSection -Title "FIREWALL (regole abilitate)" -FormatAs Table -Collector {
+    Invoke-ReportSection -Title "FIREWALL (enabled rules)" -FormatAs Table -Collector {
         $vmhost | Get-VMHostFirewallException -ErrorAction SilentlyContinue |
             Where-Object { $_.Enabled } |
             Select-Object Name, Enabled, Protocols,
                 @{N = 'PortRange'; E = { $_.Port } }
     }
 
-    Invoke-ReportSection -Title "Profilo di sicurezza account locali" -SubSection -FormatAs Table -Collector {
+    Invoke-ReportSection -Title "Local account security profile" -SubSection -FormatAs Table -Collector {
         $vmhost | Get-VMHostAccount -ErrorAction SilentlyContinue |
             Select-Object Id, Description
     }
@@ -367,10 +366,10 @@ try {
     }
 
     # ------------------------------------------------------------------------------
-    # 8. VIB installati (pacchetti software)
+    # 8. Installed VIBs (software packages)
     # ------------------------------------------------------------------------------
 
-    Invoke-ReportSection -Title "VIB INSTALLATI (software packages)" -FormatAs Table -Collector {
+    Invoke-ReportSection -Title "INSTALLED VIBS (software packages)" -FormatAs Table -Collector {
         $esxcli = Get-EsxCli -VMHost $vmhost -V2 -ErrorAction Stop
         $esxcli.software.vib.list.Invoke() |
             Select-Object Name, Version, Vendor, AcceptanceLevel, InstallDate, Status |
@@ -378,14 +377,14 @@ try {
     }
 
     # ------------------------------------------------------------------------------
-    # 9. Certificati host
+    # 9. Host certificate
     # ------------------------------------------------------------------------------
 
-    Invoke-ReportSection -Title "CERTIFICATO HOST (HTTPS/vpxd)" -Collector {
+    Invoke-ReportSection -Title "HOST CERTIFICATE (HTTPS/vpxd)" -Collector {
         $certBytes = $hostView.Config.Certificate
 
         if (-not $certBytes) {
-            [PSCustomObject]@{ Info = 'Certificato non esposto dalle API per questo host/permessi.' }
+            [PSCustomObject]@{ Info = 'Certificate not exposed by the API for this host/permissions.' }
         }
         else {
             $x509 = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new([byte[]]$certBytes)
@@ -400,17 +399,17 @@ try {
     }
 
     # ------------------------------------------------------------------------------
-    # 10. Impostazioni avanzate (dump completo)
+    # 10. Advanced settings (full dump)
     # ------------------------------------------------------------------------------
 
-    Invoke-ReportSection -Title "IMPOSTAZIONI AVANZATE (Advanced System Settings) - dump completo" -FormatAs KeyValue -Collector {
+    Invoke-ReportSection -Title "ADVANCED SETTINGS (Advanced System Settings) - full dump" -FormatAs KeyValue -Collector {
         $vmhost | Get-AdvancedSetting -ErrorAction SilentlyContinue |
             Select-Object Name, Value |
             Sort-Object Name
     }
 
     # ------------------------------------------------------------------------------
-    # Scrittura del file di report
+    # Writing the report file
     # ------------------------------------------------------------------------------
 
     if (-not (Test-Path -Path $OutputFolder)) {
@@ -424,9 +423,9 @@ try {
     $script:ReportLines | Set-Content -Path $reportFile -Encoding UTF8
 
     Write-Host ""
-    Write-Host "Report completato: $reportFile" -ForegroundColor Green
+    Write-Host "Report completed: $reportFile" -ForegroundColor Green
 }
 finally {
     Disconnect-VIServer -Server $viConnection -Confirm:$false -ErrorAction SilentlyContinue
-    Write-Host "Disconnesso da vCenter." -ForegroundColor Cyan
+    Write-Host "Disconnected from vCenter." -ForegroundColor Cyan
 }
