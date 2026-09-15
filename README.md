@@ -47,6 +47,35 @@ columns:
 .\New-VDPortgroupFromVlanList.ps1 -vCenter vcenter.lab.local -Username 'administrator@vsphere.local' -VDSwitchName 'vDS-Prod' -CsvPath .\portgroups-example.csv
 ```
 
+### [Get-EsxiHostConfig](Get-EsxiHostConfig/Get-EsxiHostConfig.ps1)
+
+Connects to a vCenter Server (credentials requested interactively via
+`Get-Credential`, never passed as a parameter), locates the given ESXi host
+and collects its full configuration into a single readable text report:
+general info/hardware/BIOS, maintenance/lockdown state, licensing,
+date/time and NTP, networking (DNS/gateway, standard and distributed
+vSwitches, port groups, physical and VMkernel adapters, static routes),
+storage (datastores, HBAs, software iSCSI adapter, SCSI devices,
+multipathing), services, firewall rules, local accounts, syslog, power
+management, installed VIBs, host certificate, and a full dump of the
+advanced system settings.
+
+Handles vCenter connection and disconnection on its own (requires the
+VMware PowerCLI module, detected via the `Connect-VIServer` cmdlet
+regardless of whether it's packaged as `VMware.PowerCLI` or
+`VCF.PowerCLI`).
+
+```powershell
+.\Get-EsxiHostConfig.ps1 -vCenter vcenter01.dominio.local -EsxiHost esxi01.dominio.local
+
+.\Get-EsxiHostConfig.ps1 -vCenter 10.0.0.10 -EsxiHost esxi02.dominio.local -OutputFolder C:\Report
+```
+
+The report is saved as `EsxiConfig_<host>_<timestamp>.txt` in the folder
+given by `-OutputFolder` (default: current folder). These report files are
+not tracked by the repository since they contain environment-specific
+configuration data.
+
 ## License
 
 Distributed under the [MIT](LICENSE) license.
